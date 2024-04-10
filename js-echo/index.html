@@ -1,0 +1,16 @@
+<html>
+
+<head>
+    <title>js echo</title>
+</head>
+
+<body>
+    <h1 id="text"></h1>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search)
+        const text = document.getElementById("text")
+        text.textContent = urlParams.get("text")
+    </script>
+</body>
+
+</html>
