@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pollard's Rho Benchmark</title>
+    <style>
+      body {
+        background: #111;
+        color: #eee;
+        font-family: monospace;
+        padding: 20px;
+        max-width: 800px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #333;
+        padding-bottom: 10px;
+        margin-bottom: 10px;
+      }
+      button {
+        background: #0070f3;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #out {
+        background: #1a1a1a;
+        padding: 15px;
+        height: 60vh;
+        overflow-y: auto;
+        white-space: pre;
+        color: #4af626;
+        border: 1px solid #333;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h3>Pollard's Rho Benchmark</h3>
+      <button id="btn" onclick="run()">Run Benchmark</button>
+    </header>
+    <div id="out">// Ready...</div>
+
+    <script>
+      "use strict";
+
+      /**
+       * Calculates the Greatest Common Divisor of two BigInts.
+       * @param {bigint} a
+       * @param {bigint} b
+       * @returns {bigint}
+       */
+      function gcd(a, b) {
+        while (b !== 0n) {
+          let t = b;
+          b = a % b;
+          a = t;
+        }
+        return a;
+      }
+
+      /**
+       * Generates a random 64-bit integer as a BigInt.
+       * Math.random() is insufficient for full 64-bit precision,
+       * so we combine two 32-bit random parts.
+       */
+      function getRandom64() {
+        const hi = BigInt(Math.floor(Math.random() * 4294967296));
+        const lo = BigInt(Math.floor(Math.random() * 4294967296));
+        return (hi << 32n) | lo;
+      }
+
+      /**
+       * Factorizes a composite number n using Pollard's Rho algorithm with Brent's cycle finding.
+       * References:
+       * https://en.wikipedia.org/wiki/Pollard%27s_rho_algorithm
+       * https://en.wikipedia.org/wiki/Cycle_detection#Floyd's_tortoise_and_hare
+       * https://maths-people.anu.edu.au/~brent/pd/rpb051i.pdf
+       *
+       * @param {bigint} n - The number to factorize
+       * @returns {bigint} A non-trivial factor, or 1 if failed.
+       */
+      function factorize(n) {
+        let y = (getRandom64() % (n - 1n)) + 1n;
+        let c = (getRandom64() % (n - 1n)) + 1n;
+
+        const M = 512; // Block size for GCD accumulation
+        let r = M; // Counter for next power of 2 limit
+        let q = 1n; // Accumulator for product of differences
+        let x = 0n; // Tortoise
+        let ys = 0n; // Saved state for backtracking
+        let g = 1n; // Greatest common divisor
+
+        // Main Loop
+        while (g === 1n) {
+          x = y;
+
+          // Advance y (Hare) r steps
+          for (let i = 0; i < r; i++) {
+            y = (y * y + c) % n;
+          }
+
+          let k = 0;
+          while (k < r && g === 1n) {
+            ys = y;
+
+            // Process a block of size M
+            // This loop is unrolled 4x
+            for (let i = 0; i < M; i += 4) {
+              // Unroll 1
+              y = (y * y + c) % n;
+              let d1 = x > y ? x - y : y - x;
+
+              // Unroll 2
+              y = (y * y + c) % n;
+              let d2 = x > y ? x - y : y - x;
+
+              // Unroll 3
+              y = (y * y + c) % n;
+              let d3 = x > y ? x - y : y - x;
+
+              // Unroll 4
+              y = (y * y + c) % n;
+              let d4 = x > y ? x - y : y - x;
+
+              // Accumulate product of differences
+              // We multiply 4 differences then mod once to reduce modulo overhead
+              q = (q * d1 * d2 * d3 * d4) % n;
+            }
+
+            // Perform GCD once per block M
+            g = gcd(q, n);
+            k += M;
+          }
+
+          r *= 2;
+        }
+
+        // If g == n, the batching overshot the factor (step limit M was too large).
+        // Backtrack to ys and proceed step-by-step to find the exact collision.
+        if (g === n) {
+          g = 1n;
+          y = ys;
+          while (g === 1n) {
+            y = (y * y + c) % n;
+            let d = x > y ? x - y : y - x;
+            g = gcd(d, n);
+          }
+        }
+
+        // Return factor if found
+        if (g > 1n && g < n) {
+          const other = n / g;
+          return g < other ? g : other;
+        }
+
+        return 1n;
+      }
+
+      /**
+       * Helper to perform the factorization with retry logic.
+       * Pollard's Rho is probabilistic.
+       */
+      function pqPrimeFactorization(pq) {
+        const bigPq = BigInt(pq);
+        let p = 1n;
+        let retries = 0;
+
+        while (p <= 1n && retries < 3) {
+          p = factorize(bigPq);
+          retries++;
+        }
+
+        if (p <= 1n) {
+          throw new Error(`Unable to factorize ${pq}.`);
+        }
+
+        const q = bigPq / p;
+        return [p, q];
+      }
+
+      // Test vectors
+      const vectors = [
+        1541157150752037067n,
+        2616236600529642443n,
+        2371559762769689761n,
+        1889511970825394711n,
+        3453257802011048431n,
+        1585997650700150269n,
+        2710383355131952009n,
+        2863451067122149151n,
+        3555730626993576839n,
+        1628740944112907797n,
+        3412063834145852219n,
+        2995124169761413559n,
+        1634571027732491371n,
+        1669665743495537377n,
+        2059676534893627007n,
+        2047989250019597537n,
+        2084438288250169513n,
+        1511659768699021969n,
+        1603290835348829573n,
+        2010783836288632997n,
+        2866718303060007901n,
+        2684426640773849773n,
+        1986751222950229451n,
+        2204005795760442703n,
+        2864560659264621173n,
+        1872389104705625447n,
+        2128011747455772383n,
+        2270579411739987619n,
+        3131763716962183189n,
+        2124580415117522969n,
+        2480241619526586677n,
+        1144729431763255999n,
+        2208205675668929609n,
+        1643484876309709241n,
+        1609802137271227037n,
+        1618600856685852917n,
+        2362989025027320673n,
+        2425386216558252611n,
+        1815383399362156721n,
+        1730186615470997041n,
+        3072979931272624673n,
+        1676999648473525121n,
+        3247300643226423907n,
+        3360188578271065391n,
+        3077135769690070337n,
+        2498905295995980259n,
+        1383360098873567483n,
+        1609162899761649689n,
+        1581801245839713527n,
+        2924242380382940633n,
+      ];
+
+      async function run() {
+        const btn = document.getElementById("btn");
+        const out = document.getElementById("out");
+        btn.disabled = true;
+        out.innerText = "Running Pollard's Rho (Fixed Block + Batching)...\n\n";
+
+        let totalTime = 0;
+
+        for (let i = 0; i < vectors.length; i++) {
+          await new Promise((r) => setTimeout(r, 0));
+
+          const n = vectors[i];
+          const start = performance.now();
+
+          let p = 1n,
+            q = 1n;
+          try {
+            [p, q] = pqPrimeFactorization(n);
+          } catch (e) {
+            console.error(e);
+          }
+
+          const end = performance.now();
+          const dur = end - start;
+          totalTime += dur;
+
+          out.innerText += `#${(i + 1)
+            .toString()
+            .padEnd(2)} ${n} = ${p} x ${q}  [${dur.toFixed(2)}ms]\n`;
+          out.scrollTop = out.scrollHeight;
+        }
+
+        const avg = totalTime / vectors.length;
+        out.innerText += `\nDone. Avg: ${avg.toFixed(
+          3
+        )}ms | Total: ${totalTime.toFixed(2)}ms`;
+        out.scrollTop = out.scrollHeight;
+
+        btn.disabled = false;
+      }
+    </script>
+  </body>
+</html>
